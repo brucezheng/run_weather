@@ -11,7 +11,8 @@ const DAILY = [
   'precipitation_sum', 'wind_speed_10m_max', 'uv_index_max', 'sunrise', 'sunset',
 ];
 const STALE_MS = 30 * 60 * 1000;
-const FALLBACK_PLACE = { name: 'Portland, Oregon', lat: 45.523, lon: -122.676 }; // shown until the user picks a place
+// Shown to first-time visitors when the IP-based guess isn't available.
+const FALLBACK_PLACE = { name: 'Portland, Oregon', lat: 45.523, lon: -122.676 };
 
 // WMO weather codes -> [label, day icon, night icon]
 const WMO = {
@@ -636,6 +637,25 @@ function setPlace(place) {
   refresh();
 }
 
+// First visit: guess the city from the visitor's IP via the Netlify edge function
+// (netlify/edge-functions/geo.js). Returns null when unavailable, e.g. on localhost.
+async function guessPlace() {
+  try {
+    const res = await fetch('/api/geo', { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return null;
+    const g = await res.json();
+    if (g.lat == null || g.lon == null) return null;
+    return {
+      name: [g.city, g.region].filter(Boolean).join(', ') || 'Near you',
+      lat: Number(Number(g.lat).toFixed(3)),
+      lon: Number(Number(g.lon).toFixed(3)),
+      approx: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // First visit (nothing saved): use location right away if the browser already allows it,
 // otherwise offer it in a banner. The banner's tap is what triggers the browser's own prompt.
 async function offerLocation() {
@@ -645,6 +665,10 @@ async function offerLocation() {
     if (perm?.state === 'granted') return locate();
     if (perm?.state === 'denied') return;
   } catch { /* Permissions API unsupported; fall through to the banner */ }
+  const city = esc(state.place.name.split(',')[0]);
+  $('#loc-msg').innerHTML = state.place.approx
+    ? `📍 Showing <b>${city}</b>, a guess based on your network. Use your precise location?`
+    : `📍 Showing <b>${city}</b>. Use your location for a local forecast?`;
   $('#loc-prompt').hidden = false;
 }
 
@@ -774,5 +798,8 @@ $('#loc-no').addEventListener('click', () => {
 });
 
 render();
-refresh();
-offerLocation();
+(async () => {
+  if (!load('home') && !load('place')) state.place = (await guessPlace()) || FALLBACK_PLACE;
+  refresh();
+  offerLocation();
+})();
