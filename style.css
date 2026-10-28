@@ -113,6 +113,9 @@ a { color: inherit; }
   cursor: pointer;
 }
 .btn:hover { background: var(--hover); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn:disabled:hover { background: var(--surface); }
+#home.on { background: var(--selected); border-color: color-mix(in srgb, var(--rain) 40%, var(--line)); }
 
 /* Layout */
 main { max-width: 1100px; margin: 0 auto; padding: 0 16px 16px; }
@@ -205,8 +208,7 @@ h2, h3 {
 /* Day detail */
 .place-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .place { font-size: 20px; font-weight: 600; min-width: 0; }
-.default-btn { height: 30px; font-size: 13px; white-space: nowrap; color: var(--muted); }
-.default-btn.on { color: var(--fair); border-color: color-mix(in srgb, var(--fair) 40%, var(--line)); }
+.home-btn { height: 30px; font-size: 13px; white-space: nowrap; color: var(--muted); }
 .date { color: var(--muted); }
 .summary { display: flex; align-items: center; gap: 16px; margin: 12px 0; }
 .big-icon { font-size: 52px; line-height: 1; }

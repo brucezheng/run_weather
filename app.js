@@ -47,7 +47,7 @@ const WMO = {
 const SCORE_LABEL = { great: 'Great', good: 'Good', fair: 'Fair', poor: 'Poor' };
 
 const state = {
-  home: load('home'), // default city, opened on startup: { name, lat, lon }
+  home: load('home'), // home city, opened on startup: { name, lat, lon }
   place: load('home') || load('place'), // { name, lat, lon }
   units: load('units') || (navigator.language === 'en-US' ? 'imperial' : 'metric'),
   data: null,
@@ -278,7 +278,13 @@ const samePlace = (a, b) => !!a && !!b && a.lat === b.lat && a.lon === b.lon;
 
 function render() {
   $('#units').textContent = imperial() ? '°F' : '°C';
-  $('#home').hidden = !state.home || samePlace(state.home, state.place);
+  const homeBtn = $('#home');
+  homeBtn.disabled = !state.home;
+  const atHome = samePlace(state.home, state.place);
+  homeBtn.classList.toggle('on', atHome);
+  homeBtn.title = !state.home ? 'No home yet. Tap "Set as home" on a city.'
+    : atHome ? `You're viewing home: ${state.home.name}`
+    : `Go to home: ${state.home.name}`;
   if (!state.data) return;
 
   const { days } = state.data;
@@ -320,10 +326,10 @@ function detail(d, index) {
 
   return `
     <div class="place-row">
-      <div class="place">${esc(state.place.name)}</div>
-      <button class="btn default-btn${isHome ? ' on' : ''}" data-action="toggle-default"
-        title="${isHome ? 'Remove as default city' : 'Open this city when the app starts'}">
-        ${isHome ? '★ Default' : '☆ Set as default'}
+      <div class="place">${isHome ? '<span title="Your home">🏠</span> ' : ''}${esc(state.place.name)}</div>
+      <button class="btn home-btn" data-action="toggle-home"
+        title="${isHome ? 'Stop opening this city when the app starts' : 'Open this city when the app starts'}">
+        ${isHome ? 'Remove as home' : 'Set as home'}
       </button>
     </div>
     <div class="date">${when}</div>
@@ -628,7 +634,7 @@ function setPlace(place) {
   refresh();
 }
 
-function toggleDefault() {
+function toggleHome() {
   state.home = samePlace(state.home, state.place) ? null : state.place;
   save('home', state.home);
   render();
@@ -726,7 +732,7 @@ $('#units').addEventListener('click', () => {
 $('#detail').addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
   if (!el) return;
-  if (el.dataset.action === 'toggle-default') toggleDefault();
+  if (el.dataset.action === 'toggle-home') toggleHome();
   if (el.dataset.action === 'score-help') openScoreHelp(el.dataset.time);
 });
 
