@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Run Weather</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="brand">🏃 <span>Run Weather</span></h1>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search city…" autocomplete="off" aria-label="Search city">
+      <ul id="results" class="results" hidden></ul>
+    </div>
+    <button id="home" class="btn" title="Go to default city" aria-label="Go to default city" hidden>🏠</button>
+    <button id="locate" class="btn" title="Use my location" aria-label="Use my location">📍</button>
+    <button id="units" class="btn" title="Switch units" aria-label="Switch units">°F</button>
+  </header>
+
+  <main>
+    <p id="status" class="status">Search for a city or tap 📍 to use your location.</p>
+    <div id="content" class="layout" hidden>
+      <section id="detail" class="card detail"></section>
+      <section class="card days">
+        <h2>16-day forecast</h2>
+        <ol id="days" class="day-list"></ol>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="score-help" class="sheet" aria-labelledby="score-help-title">
+    <form method="dialog" class="sheet-head">
+      <h2 id="score-help-title" class="sheet-title">What's the run score?</h2>
+      <button class="btn close-btn" aria-label="Close">✕</button>
+    </form>
+    <div class="sheet-inner">
+      <div id="score-help-body"></div>
+      <form method="dialog" class="actions"><button class="btn">Got it</button></form>
+    </div>
+  </dialog>
+
+  <footer class="foot">
+    Data from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> · Forecasts past ~7 days are rough trends
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
