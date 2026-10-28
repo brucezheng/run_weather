@@ -11,6 +11,7 @@ const DAILY = [
   'precipitation_sum', 'wind_speed_10m_max', 'uv_index_max', 'sunrise', 'sunset',
 ];
 const STALE_MS = 30 * 60 * 1000;
+const FALLBACK_PLACE = { name: 'Portland, Oregon', lat: 45.523, lon: -122.676 }; // shown until the user picks a place
 
 // WMO weather codes -> [label, day icon, night icon]
 const WMO = {
@@ -48,7 +49,7 @@ const SCORE_LABEL = { great: 'Great', good: 'Good', fair: 'Fair', poor: 'Poor' }
 
 const state = {
   home: load('home'), // home city, opened on startup: { name, lat, lon }
-  place: load('home') || load('place'), // { name, lat, lon }
+  place: load('home') || load('place') || FALLBACK_PLACE, // { name, lat, lon }
   units: load('units') || (navigator.language === 'en-US' ? 'imperial' : 'metric'),
   data: null,
   fetchedAt: 0,
@@ -631,7 +632,20 @@ function setPlace(place) {
   state.place = place;
   state.selected = 0;
   save('place', place);
+  $('#loc-prompt').hidden = true; // a chosen place answers the first-visit prompt
   refresh();
+}
+
+// First visit (nothing saved): use location right away if the browser already allows it,
+// otherwise offer it in a banner. The banner's tap is what triggers the browser's own prompt.
+async function offerLocation() {
+  if (load('home') || load('place') || load('locPromptDismissed') || !navigator.geolocation) return;
+  try {
+    const perm = await navigator.permissions?.query({ name: 'geolocation' });
+    if (perm?.state === 'granted') return locate();
+    if (perm?.state === 'denied') return;
+  } catch { /* Permissions API unsupported; fall through to the banner */ }
+  $('#loc-prompt').hidden = false;
 }
 
 function toggleHome() {
@@ -749,5 +763,16 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.place && Date.now() - state.fetchedAt > STALE_MS) refresh();
 });
 
+$('#loc-yes').addEventListener('click', () => {
+  $('#loc-prompt').hidden = true;
+  locate();
+});
+
+$('#loc-no').addEventListener('click', () => {
+  $('#loc-prompt').hidden = true;
+  save('locPromptDismissed', true);
+});
+
 render();
-if (state.place) refresh();
+refresh();
+offerLocation();

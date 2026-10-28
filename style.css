@@ -113,7 +113,24 @@ a { color: inherit; }
   cursor: pointer;
 }
 .btn:hover { background: var(--hover); }
+.btn.primary { background: var(--rain); border-color: var(--rain); color: var(--surface); font-weight: 600; }
+.btn.primary:hover { background: color-mix(in srgb, var(--rain) 85%, var(--text)); }
 .btn:disabled { opacity: 0.4; cursor: default; }
+
+/* First-visit location banner */
+.prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-bottom: 16px;
+  padding: 10px 10px 10px 16px;
+  border: 1px solid color-mix(in srgb, var(--rain) 30%, var(--line));
+  border-radius: var(--radius);
+  background: var(--selected);
+}
+.prompt-actions { display: flex; align-items: center; gap: 14px; }
 .btn:disabled:hover { background: var(--surface); }
 #home.on { background: var(--selected); border-color: color-mix(in srgb, var(--rain) 40%, var(--line)); }
 

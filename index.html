@@ -19,7 +19,14 @@
   </header>
 
   <main>
-    <p id="status" class="status">Search for a city or tap 📍 to use your location.</p>
+    <div id="loc-prompt" class="prompt" hidden>
+      <span>📍 Showing <b>Portland</b>. Use your location for a local forecast?</span>
+      <span class="prompt-actions">
+        <button id="loc-yes" class="btn primary">Use my location</button>
+        <button id="loc-no" class="link-btn">Not now</button>
+      </span>
+    </div>
+    <p id="status" class="status" hidden></p>
     <div id="content" class="layout" hidden>
       <section id="detail" class="card detail"></section>
       <section class="card days">
