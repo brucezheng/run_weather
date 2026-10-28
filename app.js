@@ -11,6 +11,10 @@ const DAILY = [
   'precipitation_sum', 'wind_speed_10m_max', 'uv_index_max', 'sunrise', 'sunset',
 ];
 const STALE_MS = 30 * 60 * 1000;
+// Run hours: earliest and latest start hour for "best time to run". Each is an hour (0–23)
+// or 'sunrise' / 'sunset' for that day.
+const DEFAULT_PREFS = { from: 'sunrise', to: 'sunset' };
+
 // Shown to first-time visitors when the IP-based guess isn't available.
 const FALLBACK_PLACE = { name: 'Portland, Oregon', lat: 45.523, lon: -122.676 };
 
@@ -52,6 +56,7 @@ const state = {
   home: load('home'), // home city, opened on startup: { name, lat, lon }
   place: load('home') || load('place') || FALLBACK_PLACE, // { name, lat, lon }
   units: load('units') || (navigator.language === 'en-US' ? 'imperial' : 'metric'),
+  prefs: { ...DEFAULT_PREFS, ...load('prefs') },
   data: null,
   fetchedAt: 0,
   selected: 0,
@@ -127,7 +132,6 @@ function shape(raw) {
       sunrise: d.sunrise[i],
       sunset: d.sunset[i],
       hours: upcoming,
-      best: bestHour(upcoming, d.sunrise[i], d.sunset[i]),
     };
   });
 
@@ -212,12 +216,29 @@ function runScore(h) {
   return { score: Math.max(0, 100 - total), penalties };
 }
 
-// Best-scoring hour between sunrise and sunset (earliest wins ties).
-function bestHour(hours, sunrise, sunset) {
-  const from = sunrise ? Number(sunrise.slice(11, 13)) : 6;
-  const to = sunset ? Number(sunset.slice(11, 13)) : 20;
-  return hours
-    .filter((h) => h.score != null && h.hour >= from && h.hour <= to)
+// The user's run window for a day as start hours, resolving 'sunrise'/'sunset' from the forecast.
+function runWindow(d) {
+  const { from, to } = state.prefs;
+  return {
+    from: from === 'sunrise' ? (d.sunrise ? Number(d.sunrise.slice(11, 13)) : 6) : from,
+    to: to === 'sunset' ? (d.sunset ? Number(d.sunset.slice(11, 13)) : 20) : to,
+  };
+}
+
+function describeWindow() {
+  const { from, to } = state.prefs;
+  return `${from === 'sunrise' ? 'sunrise' : fmtHour(from)} to ${to === 'sunset' ? 'sunset' : fmtHour(to)}`;
+}
+
+function inRunWindow(hour, d) {
+  const { from, to } = runWindow(d);
+  return from <= to ? hour >= from && hour <= to : hour >= from || hour <= to; // from > to wraps past midnight
+}
+
+// Best-scoring hour inside the run window (earliest wins ties).
+function bestHour(d) {
+  return d.hours
+    .filter((h) => h.score != null && inRunWindow(h.hour, d))
     .reduce((best, h) => (!best || h.score > best.score ? h : best), null);
 }
 
@@ -290,6 +311,7 @@ function render() {
   if (!state.data) return;
 
   const { days } = state.data;
+  for (const d of days) d.best = bestHour(d); // depends on the run-hours preference, so computed per render
   const lo = Math.min(...days.map((d) => d.min ?? Infinity));
   const hi = Math.max(...days.map((d) => d.max ?? -Infinity));
 
@@ -323,7 +345,7 @@ function dayRow(d, i, lo, hi) {
 function detail(d, index) {
   const w = wx(d.code);
   const when = dateObj(d.date).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  const rows = d.hours.map((h) => hourRow(h, h === d.best)).join('');
+  const rows = d.hours.map((h) => hourRow(h, h === d.best, inRunWindow(h.hour, d))).join('');
   const isHome = samePlace(state.home, state.place);
 
   return `
@@ -366,7 +388,7 @@ function detail(d, index) {
 
 function bestBlock(d, index) {
   if (!d.best) {
-    const msg = index === 0 ? 'No daylight hours left today. Check tomorrow.' : 'No run score available for this day.';
+    const msg = index === 0 ? 'No hours left in your run window today. Check tomorrow.' : 'No hours in your run window this day.';
     return `<div class="best">🏃 ${msg}
       <button class="link-btn" data-action="score-help">What's the run score?</button></div>`;
   }
@@ -380,12 +402,12 @@ function bestBlock(d, index) {
   </div>`;
 }
 
-function hourRow(h, isBest) {
+function hourRow(h, isBest, inWindow) {
   const w = wx(h.code, h.isDay);
   const c = scoreClass(h.score);
   const score = h.score == null ? '' : `<button class="score-btn" data-action="score-help" data-time="${h.time}"
     aria-label="Run score ${h.score}, show breakdown"><span class="dot ${c}"></span>${h.score}</button>`;
-  return `<div class="hour${h.isDay ? '' : ' night'}${isBest ? ' best-hour' : ''}">
+  return `<div class="hour${inWindow ? '' : ' outside'}${isBest ? ' best-hour' : ''}">
     <span>${fmtHour(h.hour)}</span>
     <span title="${w.label}">${w.icon}</span>
     <span>${temp(h.temp)}</span>
@@ -433,7 +455,8 @@ function scoreHelp(hour) {
       <span class="chip fair">Fair · 40–59</span>
       <span class="chip poor">Poor · 0–39</span>
     </div>
-    <p class="muted">"Best time to run" is the highest-scoring hour between sunrise and sunset (the earliest wins a tie).
+    <p class="muted">"Best time to run" is the highest-scoring hour in your run hours, currently ${describeWindow()}
+      (the earliest wins a tie). Change them in ⚙️ Preferences.
       Tap any hour's score to see its breakdown.</p>
     ${formula()}`;
 }
@@ -674,6 +697,23 @@ async function offerLocation() {
   $('#loc-prompt').hidden = false;
 }
 
+function openPrefs() {
+  const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${fmtHour(h)}</option>`).join('');
+  $('#pref-from').innerHTML = `<option value="sunrise">Sunrise</option>${hours}`;
+  $('#pref-to').innerHTML = `<option value="sunset">Sunset</option>${hours}`;
+  $('#pref-from').value = String(state.prefs.from);
+  $('#pref-to').value = String(state.prefs.to);
+  $('#prefs').showModal();
+}
+
+function setPrefs(prefs) {
+  state.prefs = prefs;
+  save('prefs', prefs);
+  render();
+}
+
+const parseHour = (v) => (/^\d+$/.test(v) ? Number(v) : v);
+
 function toggleHome() {
   state.home = samePlace(state.home, state.place) ? null : state.place;
   save('home', state.home);
@@ -776,9 +816,20 @@ $('#detail').addEventListener('click', (e) => {
   if (el.dataset.action === 'score-help') openScoreHelp(el.dataset.time);
 });
 
-// Close the score dialog when clicking the backdrop.
-$('#score-help').addEventListener('click', (e) => {
-  if (e.target === e.currentTarget) e.currentTarget.close();
+// Close dialogs when clicking the backdrop.
+for (const dialog of document.querySelectorAll('.sheet')) {
+  dialog.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.close();
+  });
+}
+
+$('#prefs-btn').addEventListener('click', openPrefs);
+$('#pref-from').addEventListener('change', (e) => setPrefs({ ...state.prefs, from: parseHour(e.target.value) }));
+$('#pref-to').addEventListener('change', (e) => setPrefs({ ...state.prefs, to: parseHour(e.target.value) }));
+$('#pref-reset').addEventListener('click', () => {
+  setPrefs({ ...DEFAULT_PREFS });
+  $('#pref-from').value = DEFAULT_PREFS.from;
+  $('#pref-to').value = DEFAULT_PREFS.to;
 });
 
 $('#home').addEventListener('click', () => setPlace(state.home));

@@ -16,6 +16,7 @@
     <button id="home" class="btn" title="Go to home" aria-label="Go to home">🏠</button>
     <button id="locate" class="btn" title="Use my location" aria-label="Use my location">📍</button>
     <button id="units" class="btn" title="Switch units" aria-label="Switch units">°F</button>
+    <button id="prefs-btn" class="btn" title="Preferences" aria-label="Preferences">⚙️</button>
   </header>
 
   <main>
@@ -44,6 +45,25 @@
     <div class="sheet-inner">
       <div id="score-help-body"></div>
       <form method="dialog" class="actions"><button class="btn">Got it</button></form>
+    </div>
+  </dialog>
+
+  <dialog id="prefs" class="sheet" aria-labelledby="prefs-title">
+    <form method="dialog" class="sheet-head">
+      <h2 id="prefs-title" class="sheet-title">Preferences</h2>
+      <button class="btn close-btn" aria-label="Close">✕</button>
+    </form>
+    <div class="sheet-inner">
+      <fieldset class="pref">
+        <legend>Run hours</legend>
+        <p class="muted small">"Best time to run" only picks hours in this window. Other hours are dimmed in the hourly table.</p>
+        <div class="pref-row">
+          <label>Earliest start <select id="pref-from"></select></label>
+          <label>Latest start <select id="pref-to"></select></label>
+        </div>
+        <button type="button" id="pref-reset" class="link-btn">Reset to sunrise–sunset</button>
+      </fieldset>
+      <form method="dialog" class="actions"><button class="btn">Done</button></form>
     </div>
   </dialog>
 

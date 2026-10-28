@@ -259,7 +259,7 @@ h2, h3 {
 .hour.hdr { align-items: end; }
 .hour.hdr > * { font-size: 11px; line-height: 1.3; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); white-space: nowrap; }
 .hour.hdr small { display: block; font-size: 10px; text-transform: none; letter-spacing: 0; }
-.hour.night > :not(.run) { opacity: 0.6; }
+.hour.outside > :not(.run) { opacity: 0.45; } /* outside the user's run hours */
 .hour.best-hour { border-radius: 8px; background: color-mix(in srgb, var(--great) 12%, transparent); }
 .pop { display: flex; align-items: center; gap: 6px; }
 .pop .bar { flex: 1; height: 6px; border-radius: 3px; overflow: hidden; background: var(--rain-bg); }
@@ -348,6 +348,23 @@ h2, h3 {
 .sources li { margin-bottom: 6px; }
 .sources a { color: var(--rain); }
 .actions { display: flex; justify-content: flex-end; margin: 0; }
+
+/* Preferences */
+.pref { margin: 0 0 16px; padding: 0; border: 0; }
+.pref legend { margin-bottom: 4px; padding: 0; font-weight: 600; }
+.pref p { margin: 0; }
+.pref-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.pref-row label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.pref-row select {
+  min-width: 140px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
 
 @media (max-width: 800px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
