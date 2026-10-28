@@ -321,6 +321,9 @@ h2, h3 {
 .pts { color: var(--poor); font-weight: 600; font-variant-numeric: tabular-nums; }
 .math { display: block; font: 12px/1.5 var(--mono); color: var(--muted); }
 .math.total { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--text); }
+.bd-math { margin-top: 8px; }
+.bd-math summary { cursor: pointer; color: var(--rain); font-size: 13px; }
+.bd-math .math:not(.total) { margin-top: 8px; }
 .rule { margin-top: 8px; font-size: 13px; }
 .small { font-size: 13px; }
 

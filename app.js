@@ -545,7 +545,7 @@ function heatMath(p) {
   }
   lines.push(`H<sub>dry</sub> = ${dryHeatExpr(t)} = ${num(p.dry, 1)}`);
   const rounded = num(p.raw, 1) === String(p.pts) ? '' : ` → ${p.pts}`;
-  lines.push(`max(${num(p.humid, 1)}, ${num(p.dry, 1)}) = ${num(p.raw, 1)}${rounded}`);
+  lines.push(`D<sub>heat</sub> = max(${num(p.humid, 1)}, ${num(p.dry, 1)}) = ${num(p.raw, 1)}${rounded}`);
   return lines.join('<br>');
 }
 
@@ -556,18 +556,18 @@ function rainMath(p) {
   return [
     `C<sub>rain</sub> = ${p.value > 0 ? `${rainChanceExpr(p.value)} = ${num(p.chance, 1)}` : '0 (0% chance)'}`,
     `A<sub>rain</sub> = ${p.mm > 0 ? `${rainAmountExpr(r)} = ${num(p.amt, 1)}` : '0 (no rain expected)'}`,
-    `max(${num(p.chance, 1)}, ${num(p.amt, 1)}) = ${num(p.raw, 1)}${rounded}`,
+    `D<sub>rain</sub> = max(${num(p.chance, 1)}, ${num(p.amt, 1)}) = ${num(p.raw, 1)}${rounded}`,
   ].join('<br>');
 }
 
 function workedMath(p) {
-  if (p.kind === 'storm') return `${STORM.pts} · [${p.value} ≥ ${STORM.minCode}] = ${p.pts}`;
+  if (p.kind === 'storm') return `D<sub>storm</sub> = ${STORM.pts} · [${p.value} ≥ ${STORM.minCode}] = ${p.pts}`;
   if (p.kind === 'heat') return heatMath(p);
   if (p.kind === 'rain') return rainMath(p);
   const u = unitsFor(TERMS[p.kind].dim);
   const x = num(p.value * u.k + u.offset, u.digits);
   const rounded = num(p.raw, 1) === String(p.pts) ? '' : ` → ${p.pts}`;
-  return `${termExpr(p.kind, x, true)} = ${num(p.raw, 1)}${rounded}`;
+  return `D<sub>${p.kind}</sub> = ${termExpr(p.kind, x, true)} = ${num(p.raw, 1)}${rounded}`;
 }
 
 function tempDewRule(h) {
@@ -587,18 +587,20 @@ function breakdown(h) {
   const c = scoreClass(h.score);
   const when = `${dateObj(h.date).toLocaleDateString(undefined, { weekday: 'long' })}, ${fmtHour(h.hour)}`;
   const items = h.penalties.length
-    ? h.penalties.map((p) => `<li>
-        <span>${PENALTY_LABEL[p.kind](p.value, p)}<span class="math">${workedMath(p)}</span></span>
-        <span class="pts">−${p.pts}</span>
-      </li>`).join('')
+    ? h.penalties.map((p) => `<li><span>${PENALTY_LABEL[p.kind](p.value, p)}</span><span class="pts">−${p.pts}</span></li>`).join('')
     : '<li class="muted">Ideal conditions, no deductions</li>';
   const sum = h.penalties.map((p) => p.pts).join(' + ') || '0';
+  // Worked math stays available but collapsed, so the summary reads at a glance.
   return `<div class="breakdown">
     <div class="bd-head"><strong>${when}</strong><span class="chip ${c}">${SCORE_LABEL[c]} · ${h.score}</span></div>
     <div class="muted">${temp(h.temp)}, feels like ${temp(h.feels)} · ${wx(h.code, h.isDay).label}</div>
     <ul>${items}</ul>
-    <div class="math total">S = max(0, 100 − (${sum})) = ${h.score}</div>
-    ${tempDewRule(h)}
+    <details class="bd-math">
+      <summary>Show the math</summary>
+      ${h.penalties.map((p) => `<div class="math">${workedMath(p)}</div>`).join('')}
+      <div class="math total">S = max(0, 100 − (${sum})) = ${h.score}</div>
+      ${tempDewRule(h)}
+    </details>
   </div>`;
 }
 
