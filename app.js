@@ -60,7 +60,6 @@ const state = {
   data: null,
   fetchedAt: 0,
   selected: 0,
-  results: [],
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -300,7 +299,6 @@ function scoreClass(s) {
 const samePlace = (a, b) => !!a && !!b && a.lat === b.lat && a.lon === b.lon;
 
 function render() {
-  $('#units').textContent = imperial() ? '°F' : '°C';
   const homeBtn = $('#home');
   homeBtn.disabled = !state.home;
   const atHome = samePlace(state.home, state.place);
@@ -697,12 +695,29 @@ async function offerLocation() {
   $('#loc-prompt').hidden = false;
 }
 
-function openPrefs() {
+// Fills the Preferences dialog from state. Safe to call while it's closed.
+function renderPrefs() {
+  for (const radio of document.querySelectorAll('input[name="units"]')) radio.checked = radio.value === state.units;
+
+  const elsewhere = !samePlace(state.home, state.place);
+  const useHere = elsewhere
+    ? `<button type="button" class="link-btn" data-action="home-here">Use ${esc(state.place.name)}</button>`
+    : '';
+  $('#home-current').innerHTML = state.home
+    ? `<span>🏠 <b>${esc(state.home.name)}</b></span>
+       <button type="button" class="link-btn" data-action="home-remove">Remove</button>${useHere}`
+    : `<span class="muted">No home set.</span>${useHere}`;
+
+  // Hour labels follow the unit system (12h for °F, 24h for °C), so rebuild them.
   const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${fmtHour(h)}</option>`).join('');
   $('#pref-from').innerHTML = `<option value="sunrise">Sunrise</option>${hours}`;
   $('#pref-to').innerHTML = `<option value="sunset">Sunset</option>${hours}`;
   $('#pref-from').value = String(state.prefs.from);
   $('#pref-to').value = String(state.prefs.to);
+}
+
+function openPrefs() {
+  renderPrefs();
   $('#prefs').showModal();
 }
 
@@ -710,14 +725,27 @@ function setPrefs(prefs) {
   state.prefs = prefs;
   save('prefs', prefs);
   render();
+  renderPrefs();
+}
+
+function setUnits(units) {
+  state.units = units;
+  save('units', units);
+  render();
+  renderPrefs();
+}
+
+function setHome(place) {
+  state.home = place;
+  save('home', place);
+  render();
+  renderPrefs();
 }
 
 const parseHour = (v) => (/^\d+$/.test(v) ? Number(v) : v);
 
 function toggleHome() {
-  state.home = samePlace(state.home, state.place) ? null : state.place;
-  save('home', state.home);
-  render();
+  setHome(samePlace(state.home, state.place) ? null : state.place);
 }
 
 function locate() {
@@ -737,63 +765,74 @@ function locate() {
   );
 }
 
-let searchTimer;
-let searchSeq = 0;
+// Wires up a city search box. `root` holds an input and a .results list; `onPick` receives the
+// chosen { name, lat, lon }. Used by the top bar and by the home setting in Preferences.
+function citySearch(root, onPick) {
+  const input = root.querySelector('input');
+  const list = root.querySelector('.results');
+  let timer;
+  let seq = 0;
+  let results = [];
 
-async function search(q) {
-  const seq = ++searchSeq;
-  try {
-    const params = new URLSearchParams({ name: q, count: 6, language: 'en', format: 'json' });
-    const res = await fetch(`${GEOCODE_URL}?${params}`);
-    const { results = [] } = await res.json();
-    if (seq !== searchSeq) return; // a newer search is in flight
-    state.results = results;
-    const ul = $('#results');
-    ul.innerHTML = results.length
-      ? results.map((r, i) => `<li><button data-i="${i}">${esc(r.name)}
-          <small>${esc([r.admin1, r.country].filter(Boolean).join(', '))}</small></button></li>`).join('')
-      : '<li class="empty">No matches</li>';
-    ul.hidden = false;
-  } catch {
-    // Network hiccup while typing; the next keystroke will retry.
+  const hide = () => {
+    seq++; // drop any search still in flight
+    list.hidden = true;
+  };
+
+  async function search(q) {
+    const mine = ++seq;
+    try {
+      const params = new URLSearchParams({ name: q, count: 6, language: 'en', format: 'json' });
+      const data = await (await fetch(`${GEOCODE_URL}?${params}`)).json();
+      if (mine !== seq) return; // a newer search is in flight
+      results = data.results ?? [];
+      list.innerHTML = results.length
+        ? results.map((r, i) => `<li><button type="button" data-i="${i}">${esc(r.name)}
+            <small>${esc([r.admin1, r.country].filter(Boolean).join(', '))}</small></button></li>`).join('')
+        : '<li class="empty">No matches</li>';
+      list.hidden = false;
+    } catch {
+      // Network hiccup while typing; the next keystroke will retry.
+    }
   }
-}
 
-function pickResult(i) {
-  const r = state.results[i];
-  if (!r) return;
-  setPlace({ name: [r.name, r.admin1].filter(Boolean).join(', '), lat: r.latitude, lon: r.longitude });
-  $('#search').value = '';
-  hideResults();
-}
+  function pick(i) {
+    const r = results[i];
+    if (!r) return;
+    onPick({ name: [r.name, r.admin1].filter(Boolean).join(', '), lat: r.latitude, lon: r.longitude });
+    input.value = '';
+    hide();
+  }
 
-function hideResults() {
-  searchSeq++;
-  $('#results').hidden = true;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2) return hide();
+    timer = setTimeout(() => search(q), 250);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !list.hidden) {
+      e.preventDefault(); // inside a dialog, close the list rather than the dialog
+      hide();
+    }
+    if (e.key === 'Enter' && !list.hidden) {
+      e.preventDefault();
+      pick(0);
+    }
+  });
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (btn) pick(Number(btn.dataset.i));
+  });
+  document.addEventListener('click', (e) => {
+    if (!root.contains(e.target)) hide();
+  });
 }
 
 // ---------- Events ----------
 
-$('#search').addEventListener('input', (e) => {
-  clearTimeout(searchTimer);
-  const q = e.target.value.trim();
-  if (q.length < 2) return hideResults();
-  searchTimer = setTimeout(() => search(q), 250);
-});
-
-$('#search').addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') hideResults();
-  if (e.key === 'Enter' && !$('#results').hidden) pickResult(0);
-});
-
-$('#results').addEventListener('click', (e) => {
-  const btn = e.target.closest('button');
-  if (btn) pickResult(Number(btn.dataset.i));
-});
-
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.search')) hideResults();
-});
+citySearch($('#place-search'), setPlace);
+citySearch($('#home-search'), setHome);
 
 $('#days').addEventListener('click', (e) => {
   const btn = e.target.closest('.day');
@@ -803,11 +842,6 @@ $('#days').addEventListener('click', (e) => {
   if (matchMedia('(max-width: 800px)').matches) $('#detail').scrollIntoView({ behavior: 'smooth' });
 });
 
-$('#units').addEventListener('click', () => {
-  state.units = imperial() ? 'metric' : 'imperial';
-  save('units', state.units);
-  render();
-});
 
 $('#detail').addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
@@ -826,10 +860,16 @@ for (const dialog of document.querySelectorAll('.sheet')) {
 $('#prefs-btn').addEventListener('click', openPrefs);
 $('#pref-from').addEventListener('change', (e) => setPrefs({ ...state.prefs, from: parseHour(e.target.value) }));
 $('#pref-to').addEventListener('change', (e) => setPrefs({ ...state.prefs, to: parseHour(e.target.value) }));
-$('#pref-reset').addEventListener('click', () => {
-  setPrefs({ ...DEFAULT_PREFS });
-  $('#pref-from').value = DEFAULT_PREFS.from;
-  $('#pref-to').value = DEFAULT_PREFS.to;
+$('#pref-reset').addEventListener('click', () => setPrefs({ ...DEFAULT_PREFS }));
+
+for (const radio of document.querySelectorAll('input[name="units"]')) {
+  radio.addEventListener('change', () => setUnits(radio.value));
+}
+
+$('#home-current').addEventListener('click', (e) => {
+  const action = e.target.closest('[data-action]')?.dataset.action;
+  if (action === 'home-here') setHome(state.place);
+  if (action === 'home-remove') setHome(null);
 });
 
 $('#home').addEventListener('click', () => setPlace(state.home));

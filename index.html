@@ -9,13 +9,12 @@
 <body>
   <header class="topbar">
     <h1 class="brand">🏃 <span>Run Weather</span></h1>
-    <div class="search">
-      <input id="search" type="search" placeholder="Search city…" autocomplete="off" aria-label="Search city">
-      <ul id="results" class="results" hidden></ul>
+    <div id="place-search" class="search">
+      <input type="search" placeholder="Search city…" autocomplete="off" aria-label="Search city">
+      <ul class="results" hidden></ul>
     </div>
     <button id="home" class="btn" title="Go to home" aria-label="Go to home">🏠</button>
     <button id="locate" class="btn" title="Use my location" aria-label="Use my location">📍</button>
-    <button id="units" class="btn" title="Switch units" aria-label="Switch units">°F</button>
     <button id="prefs-btn" class="btn" title="Preferences" aria-label="Preferences">⚙️</button>
   </header>
 
@@ -54,6 +53,24 @@
       <button class="btn close-btn" aria-label="Close">✕</button>
     </form>
     <div class="sheet-inner">
+      <fieldset class="pref">
+        <legend>Units</legend>
+        <div class="segmented">
+          <label><input type="radio" name="units" value="imperial"> °F · in · mph</label>
+          <label><input type="radio" name="units" value="metric"> °C · mm · km/h</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="pref">
+        <legend>Home</legend>
+        <p class="muted small">The city the app opens to. 🏠 in the top bar takes you back to it.</p>
+        <div id="home-current" class="home-current"></div>
+        <div id="home-search" class="search">
+          <input type="search" placeholder="Search a city to set as home…" autocomplete="off" aria-label="Search a city to set as home">
+          <ul class="results" hidden></ul>
+        </div>
+      </fieldset>
+
       <fieldset class="pref">
         <legend>Run hours</legend>
         <p class="muted small">"Best time to run" only picks hours in this window. Other hours are dimmed in the hourly table.</p>

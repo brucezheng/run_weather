@@ -351,9 +351,20 @@ h2, h3 {
 
 /* Preferences */
 .pref { margin: 0 0 16px; padding: 0; border: 0; }
-.pref legend { margin-bottom: 4px; padding: 0; font-weight: 600; }
+/* Floating the legend takes it out of the fieldset border, so the divider runs above it, not through it. */
+.pref legend { float: left; width: 100%; margin-bottom: 4px; padding: 0; font-weight: 600; }
+.pref > :not(legend) { clear: both; }
 .pref p { margin: 0; }
+.pref + .pref { padding-top: 16px; border-top: 1px solid var(--line); }
 .pref-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.segmented { display: inline-flex; margin-top: 4px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.segmented label { padding: 7px 14px; font-size: 14px; cursor: pointer; }
+.segmented label + label { border-left: 1px solid var(--line); }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented label:has(input:checked) { background: var(--selected); color: var(--rain); font-weight: 600; }
+.segmented label:has(input:focus-visible) { outline: 2px solid var(--rain); outline-offset: -2px; }
+.home-current { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin: 10px 0; }
+#home-search .results { position: static; margin-top: 4px; box-shadow: none; } /* in-flow inside the dialog */
 .pref-row label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .pref-row select {
   min-width: 140px;
