@@ -10,7 +10,7 @@ const DAILY = [
   'weather_code', 'temperature_2m_max', 'temperature_2m_min', 'precipitation_probability_max',
   'precipitation_sum', 'wind_speed_10m_max', 'uv_index_max', 'sunrise', 'sunset',
 ];
-const STALE_MS = 30 * 60 * 1000;
+const STALE_MS = 5 * 60 * 1000; // refresh the forecast this often while the page is visible
 // Run hours: earliest and latest start hour for "best time to run". Each is an hour (0–23)
 // or 'sunrise' / 'sunset' for that day.
 const DEFAULT_PREFS = { from: 'sunrise', to: 'sunset' };
@@ -640,15 +640,35 @@ function showStatus(msg) {
 
 // ---------- Actions ----------
 
-async function refresh() {
-  showStatus('Loading forecast…');
+let refreshSeq = 0;
+
+// Loads the forecast for state.place. A quiet refresh (the periodic background update) shows no
+// loading message, keeps the selected day by date, and leaves the current data up if it fails.
+async function refresh({ quiet = false } = {}) {
+  const seq = ++refreshSeq;
+  if (!quiet) showStatus('Loading forecast…');
   try {
-    state.data = await fetchForecast(state.place);
+    const data = await fetchForecast(state.place);
+    if (seq !== refreshSeq) return; // superseded, e.g. the user switched cities meanwhile
+    if (quiet) {
+      const selectedDate = state.data?.days[state.selected]?.date;
+      state.selected = Math.max(0, data.days.findIndex((d) => d.date === selectedDate));
+    }
+    state.data = data;
     state.fetchedAt = Date.now();
+    $('#updated').textContent = `Updated ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · `;
     showStatus('');
     render();
   } catch (err) {
-    showStatus(`Couldn't load the forecast: ${err.message}`);
+    if (seq !== refreshSeq) return;
+    if (!quiet) showStatus(`Couldn't load the forecast: ${err.message}`);
+    else $('#updated').textContent = $('#updated').textContent.replace(/( \(couldn't refresh\))? · $/, " (couldn't refresh) · ");
+  }
+}
+
+function refreshIfStale() {
+  if (document.visibilityState === 'visible' && state.fetchedAt && Date.now() - state.fetchedAt >= STALE_MS) {
+    refresh({ quiet: true });
   }
 }
 
@@ -876,9 +896,10 @@ $('#home').addEventListener('click', () => setPlace(state.home));
 
 $('#locate').addEventListener('click', locate);
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.place && Date.now() - state.fetchedAt > STALE_MS) refresh();
-});
+// Keep the forecast current: check every minute, and as soon as a hidden tab comes back.
+// Hidden tabs don't refresh, so a forgotten background tab costs nothing.
+setInterval(refreshIfStale, 60 * 1000);
+document.addEventListener('visibilitychange', refreshIfStale);
 
 $('#loc-yes').addEventListener('click', () => {
   $('#loc-prompt').hidden = true;
