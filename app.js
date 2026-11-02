@@ -4,7 +4,7 @@ const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const HOURLY = [
   'temperature_2m', 'apparent_temperature', 'dew_point_2m', 'precipitation_probability',
-  'precipitation', 'weather_code', 'wind_speed_10m', 'uv_index', 'is_day',
+  'precipitation', 'weather_code', 'wind_speed_10m', 'uv_index', 'is_day', 'cloud_cover',
 ];
 const DAILY = [
   'weather_code', 'temperature_2m_max', 'temperature_2m_min', 'precipitation_probability_max',
@@ -96,6 +96,7 @@ async function fetchForecast({ lat, lon }) {
 function shape(raw) {
   const h = raw.hourly;
   const d = raw.daily;
+  const sun = Object.fromEntries(d.time.map((date, i) => [date, { rise: d.sunrise[i], set: d.sunset[i] }]));
   const hours = h.time.map((time, i) => {
     const hour = {
       time,
@@ -110,7 +111,9 @@ function shape(raw) {
       wind: h.wind_speed_10m[i],
       uv: h.uv_index[i],
       isDay: h.is_day[i],
+      cloud: h.cloud_cover[i],
     };
+    hour.light = daylight(hour, sun[hour.date]) ?? hour.isDay;
     return Object.assign(hour, runScore(hour));
   });
 
@@ -137,6 +140,18 @@ function shape(raw) {
   return { days };
 }
 
+// Share (0–1) of the hour starting at h.hour that falls between sunrise and sunset, so the hour
+// the sun comes up counts as partly dark. Null when there's no usable sunrise/sunset that day
+// (polar day or night), and the caller falls back to is_day.
+function daylight(h, sun) {
+  const mins = (t) => (t?.slice(0, 10) === h.date ? Number(t.slice(11, 13)) * 60 + Number(t.slice(14, 16)) : null);
+  const rise = mins(sun?.rise);
+  const set = mins(sun?.set);
+  if (rise == null || set == null || set <= rise) return null;
+  const start = h.hour * 60;
+  return Math.max(0, Math.min(start + 60, set) - Math.max(start, rise)) / 60;
+}
+
 // Run score terms. Each deducts rate × (how far the input is past its limit), optionally capped.
 // Values are metric (°C, mm/h, km/h); the explainer converts them to display units, so this
 // table is the single source for both the score and the formula shown to the user.
@@ -146,6 +161,11 @@ const TERMS = {
   uv: { input: 'uv', dim: 'uv', limit: 6, rate: 3 },
 };
 const STORM = { minCode: 95, pts: 40 }; // flat deduction for any thunderstorm code
+
+// Mild preferences for daylight and sun. Both scale with the share of the hour in daylight (L):
+// darkness costs up to darkPts, and cloud cover costs up to cloudPts but only while the sun is up,
+// so a night hour isn't also docked for clouds nobody would see.
+const LIGHT = { darkPts: 10, cloudPts: 10 };
 
 // Heat and humidity are one problem for a runner (shedding heat), so they share a single
 // deduction: the worse of humid heat (10 points per 1% of expected slowdown from the temp + dew
@@ -210,6 +230,11 @@ function runScore(h) {
     const pts = roundPts(raw);
     if (pts > 0) penalties.push({ kind, value, raw, pts });
   }
+  const light = h.light ?? 1;
+  const cloud = LIGHT.cloudPts * light * ((h.cloud ?? 0) / 100);
+  if (roundPts(cloud) > 0) penalties.push({ kind: 'cloud', value: h.cloud, light, raw: cloud, pts: roundPts(cloud) });
+  const dark = LIGHT.darkPts * (1 - light);
+  if (roundPts(dark) > 0) penalties.push({ kind: 'dark', value: light, raw: dark, pts: roundPts(dark) });
   if (h.code >= STORM.minCode) penalties.push({ kind: 'storm', value: h.code, raw: STORM.pts, pts: STORM.pts });
   const total = penalties.reduce((sum, p) => sum + p.pts, 0);
   return { score: Math.max(0, 100 - total), penalties };
@@ -426,6 +451,8 @@ const PENALTY_LABEL = {
   rain: (v, p) => `Rain: ${v}% chance${p.mm ? `, ${amount(p.mm)} expected` : ''}`,
   wind: (v) => `Windy: ${speed(v)}`,
   uv: (v) => `High UV index: ${Math.round(v)}`,
+  cloud: (v) => `Not sunny: ${v}% cloud cover`,
+  dark: (v) => (v > 0 ? `Partly dark: ${Math.round((1 - v) * 60)} min of the hour before sunrise or after sunset` : 'Dark: sun is down'),
   storm: () => 'Thunderstorms',
 };
 
@@ -445,6 +472,9 @@ function scoreHelp(hour) {
         for a downpour. Chance and amount never stack.</li>
       <li><b>Wind</b> above ${speed(TERMS.wind.limit)}.</li>
       <li><b>UV index</b> above ${TERMS.uv.limit}.</li>
+      <li><b>Clouds</b>: a mild deduction for not being sunny, up to ${LIGHT.cloudPts} points for full overcast.
+        Only counts while the sun is up.</li>
+      <li><b>Darkness</b>: a mild ${LIGHT.darkPts} points when the sun is down, partial for the hour of sunrise or sunset.</li>
       <li><b>Thunderstorms</b>: a large deduction, because lightning is a safety risk.</li>
     </ul>
     <div class="bands">
@@ -501,6 +531,10 @@ function rainAmountExpr(r) {
   return `min(${RAIN.amountCap}, ${RAIN.amountBase} + ${num(RAIN.amountRate / u.k)} · ${r})`;
 }
 
+// Light expressions, with `l` (daylight share) and `n` (cloud cover) as symbols or values.
+const cloudExpr = (l, n) => `${LIGHT.cloudPts} · ${l} · ${n} / 100`;
+const darkExpr = (l) => `${LIGHT.darkPts} · (1 − ${l})`;
+
 function formula() {
   const row = (name, expr) => `<tr><td>${name}</td><td>= ${expr}</td></tr>`;
   const termRows = (kinds) => kinds.map((k) => row(`D<sub>${k}</sub>`, termExpr(k, SYMBOL[TERMS[k].input]))).join('');
@@ -517,6 +551,8 @@ function formula() {
       ${row('C<sub>rain</sub>', `[P<sub>rain</sub> &gt; 0] · (${rainChanceExpr('P<sub>rain</sub>')})`)}
       ${row('A<sub>rain</sub>', `[R &gt; 0] · ${rainAmountExpr('R')}`)}
       ${termRows(['wind', 'uv'])}
+      ${row('D<sub>cloud</sub>', cloudExpr('L', 'N'))}
+      ${row('D<sub>dark</sub>', darkExpr('L'))}
       ${row('D<sub>storm</sub>', `${STORM.pts} · [WMO code ≥ ${STORM.minCode}]`)}
     </table></div>
     <p class="muted small">Why add temperature and dew point? Air temperature limits how much heat you can shed
@@ -530,7 +566,8 @@ function formula() {
     <p class="muted small">
       T<sub>air</sub> = air temperature, T<sub>feels</sub> = apparent temperature, T<sub>dew</sub> = dew point (${t.unit}) ·
       P<sub>rain</sub> = precipitation probability (%) · R = precipitation (${unitsFor('precip').unit}) ·
-      W = wind speed at 10 m (${unitsFor('speed').unit}) · UV = UV index · [x] = 1 if true, else 0.
+      W = wind speed at 10 m (${unitsFor('speed').unit}) · UV = UV index · N = cloud cover (%) ·
+      L = share of the hour between sunrise and sunset (0–1) · [x] = 1 if true, else 0.
       ${imperial() ? 'The model runs in metric, so some coefficients above are conversions, which is why they aren\'t round numbers.' : ''}
     </p>
     <p class="muted small">
@@ -539,7 +576,8 @@ function formula() {
       heat), so they share one term and the worse of humid or dry heat counts, rather than stacking two
       penalties for the same thing. Marathon results show times slowing steadily as combined heat stress
       rises<sup>2</sup>. Heat uses air temperature, not feels-like, because feels-like already folds
-      in humidity. Rain works the same way: chance (the share of forecast-model runs showing rain) and amount
+      in humidity. Clouds and darkness are deliberately mild preferences rather than hazards, and clouds
+      are weighted by L so they only count when there's sun to hide. Rain works the same way: chance (the share of forecast-model runs showing rain) and amount
       (the single best-guess forecast) describe the same rain, so the worse of the two counts. Each term is
       rounded before summing so the breakdown adds up exactly.
     </p>
@@ -585,9 +623,11 @@ function workedMath(p) {
   if (p.kind === 'storm') return `D<sub>storm</sub> = ${STORM.pts} · [${p.value} ≥ ${STORM.minCode}] = ${p.pts}`;
   if (p.kind === 'heat') return heatMath(p);
   if (p.kind === 'rain') return rainMath(p);
+  const rounded = num(p.raw, 1) === String(p.pts) ? '' : ` → ${p.pts}`;
+  if (p.kind === 'cloud') return `D<sub>cloud</sub> = ${cloudExpr(num(p.light), p.value)} = ${num(p.raw, 1)}${rounded}`;
+  if (p.kind === 'dark') return `D<sub>dark</sub> = ${darkExpr(num(p.value))} = ${num(p.raw, 1)}${rounded}`;
   const u = unitsFor(TERMS[p.kind].dim);
   const x = num(p.value * u.k + u.offset, u.digits);
-  const rounded = num(p.raw, 1) === String(p.pts) ? '' : ` → ${p.pts}`;
   return `D<sub>${p.kind}</sub> = ${termExpr(p.kind, x, true)} = ${num(p.raw, 1)}${rounded}`;
 }
 
