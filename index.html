@@ -80,6 +80,12 @@
         </div>
         <button type="button" id="pref-reset" class="link-btn">Reset to sunrise–sunset</button>
       </fieldset>
+
+      <fieldset class="pref">
+        <legend>Run score</legend>
+        <label class="check"><input type="checkbox" id="pref-sun"> Prefer sun</label>
+        <p class="muted small">Take up to 10 points off cloudy daytime hours. Off by default, since plenty of runners like overcast.</p>
+      </fieldset>
       <form method="dialog" class="actions"><button class="btn">Done</button></form>
     </div>
   </dialog>
@@ -88,6 +94,7 @@
     <span id="updated"></span>Data from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> · Forecasts past ~7 days are rough trends
   </footer>
 
+  <script src="score.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

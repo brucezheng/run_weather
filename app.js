@@ -12,8 +12,8 @@ const DAILY = [
 ];
 const STALE_MS = 5 * 60 * 1000; // refresh the forecast this often while the page is visible
 // Run hours: earliest and latest start hour for "best time to run". Each is an hour (0–23)
-// or 'sunrise' / 'sunset' for that day.
-const DEFAULT_PREFS = { from: 'sunrise', to: 'sunset' };
+// or 'sunrise' / 'sunset' for that day. preferSun turns on the run score's cloud deduction.
+const DEFAULT_PREFS = { from: 'sunrise', to: 'sunset', preferSun: false };
 
 // Shown to first-time visitors when the IP-based guess isn't available.
 const FALLBACK_PLACE = { name: 'Portland, Oregon', lat: 45.523, lon: -122.676 };
@@ -114,7 +114,7 @@ function shape(raw) {
       cloud: h.cloud_cover[i],
     };
     hour.light = daylight(hour, sun[hour.date]) ?? hour.isDay;
-    return Object.assign(hour, runScore(hour));
+    return Object.assign(hour, runScore(hour, state.prefs));
   });
 
   // Times come back in the location's local time, so compare against "now" in that zone too.
@@ -138,106 +138,6 @@ function shape(raw) {
   });
 
   return { days };
-}
-
-// Share (0–1) of the hour starting at h.hour that falls between sunrise and sunset, so the hour
-// the sun comes up counts as partly dark. Null when there's no usable sunrise/sunset that day
-// (polar day or night), and the caller falls back to is_day.
-function daylight(h, sun) {
-  const mins = (t) => (t?.slice(0, 10) === h.date ? Number(t.slice(11, 13)) * 60 + Number(t.slice(14, 16)) : null);
-  const rise = mins(sun?.rise);
-  const set = mins(sun?.set);
-  if (rise == null || set == null || set <= rise) return null;
-  const start = h.hour * 60;
-  return Math.max(0, Math.min(start + 60, set) - Math.max(start, rise)) / 60;
-}
-
-// Run score terms. Each deducts rate × (how far the input is past its limit), optionally capped.
-// Values are metric (°C, mm/h, km/h); the explainer converts them to display units, so this
-// table is the single source for both the score and the formula shown to the user.
-const TERMS = {
-  cold: { input: 'feels', dim: 'temp', limit: 7, below: true, rate: 3 }, // feels under ~45°F
-  wind: { input: 'wind', dim: 'speed', limit: 20, rate: 1.2 }, // over ~12 mph
-  uv: { input: 'uv', dim: 'uv', limit: 6, rate: 3 },
-};
-const STORM = { minCode: 95, pts: 40 }; // flat deduction for any thunderstorm code
-
-// Mild preferences for daylight and sun. Both scale with the share of the hour in daylight (L):
-// darkness costs up to darkPts, and cloud cover costs up to cloudPts but only while the sun is up,
-// so a night hour isn't also docked for clouds nobody would see.
-const LIGHT = { darkPts: 10, cloudPts: 10 };
-
-// Heat and humidity are one problem for a runner (shedding heat), so they share a single
-// deduction: the worse of humid heat (10 points per 1% of expected slowdown from the temp + dew
-// point chart) and dry heat (2.5 points per °F of air temp over 75°F), which the chart underrates.
-// Uses air temp, not feels-like, since feels-like already folds in humidity.
-const HEAT = { ptsPerPct: 10, dryLimit: (75 - 32) / 1.8, dryRate: 2.5 * 1.8 };
-
-// Runners' rule of thumb: air temp + dew point (°F) -> expected pace slowdown (%), using the top
-// of each band of the popular chart. Linear between points, extended past 180 at the last slope.
-const SLOWDOWN_CURVE = [[100, 0], [110, 0.5], [120, 1], [130, 2], [140, 3], [150, 4.5], [160, 6], [170, 8], [180, 10]];
-
-// Chance and amount describe the same rain, so they share one deduction and the worse counts.
-// Any chance at all costs at least chanceFloor (a truly dry 0% hour stands out), growing with the
-// chance. Forecast rain costs amountBase for a trace, rising per mm/h up to amountCap: about −16
-// for 0.06 in/h, −40 for a 0.3 in/h downpour.
-const RAIN = { chanceFloor: 10, chanceRate: 0.15, amountBase: 10, amountRate: 4, amountCap: 40 };
-
-function rainPenalty(h) {
-  const pop = h.pop ?? 0;
-  const mm = h.precip ?? 0;
-  const chance = pop > 0 ? RAIN.chanceFloor + RAIN.chanceRate * pop : 0;
-  const amt = mm > 0 ? Math.min(RAIN.amountCap, RAIN.amountBase + RAIN.amountRate * mm) : 0;
-  const raw = Math.max(chance, amt);
-  return { kind: 'rain', value: pop, mm, chance, amt, raw, pts: roundPts(raw) };
-}
-
-const toF = (c) => (c * 9) / 5 + 32;
-
-// Round to whole points, ignoring float noise so 9.4999999 (really 9.5) rounds up like it displays.
-const roundPts = (x) => Math.round(Number(x.toFixed(6)));
-
-function slowdownPct(sumF) {
-  if (sumF <= SLOWDOWN_CURVE[0][0]) return 0;
-  const i = SLOWDOWN_CURVE.findIndex(([x]) => x >= sumF);
-  const [[x0, y0], [x1, y1]] = i === -1 ? SLOWDOWN_CURVE.slice(-2) : [SLOWDOWN_CURVE[i - 1], SLOWDOWN_CURVE[i]];
-  return y0 + ((sumF - x0) * (y1 - y0)) / (x1 - x0);
-}
-
-function heatPenalty(h) {
-  if (h.temp == null) return null;
-  const sumF = h.dew == null ? null : toF(h.temp) + toF(h.dew);
-  const slowdown = sumF == null ? 0 : slowdownPct(sumF);
-  const humid = HEAT.ptsPerPct * slowdown;
-  const dry = Math.max(0, HEAT.dryRate * (h.temp - HEAT.dryLimit));
-  const raw = Math.max(humid, dry);
-  return { kind: 'heat', value: h.temp, dew: h.dew, sumF, slowdown, humid, dry, raw, pts: roundPts(raw) };
-}
-
-// 0–100 rating of how pleasant an hour is for a run: starts at 100 and loses points for each
-// factor outside ideal conditions. Returns the deductions too so the UI can explain the score.
-function runScore(h) {
-  if (h.feels == null) return { score: null, penalties: [] };
-  const penalties = [];
-  const heat = heatPenalty(h);
-  if (heat?.pts > 0) penalties.push(heat);
-  const rain = rainPenalty(h);
-  if (rain.pts > 0) penalties.push(rain);
-  for (const [kind, t] of Object.entries(TERMS)) {
-    const value = h[t.input] ?? 0;
-    const excess = t.below ? t.limit - value : value - t.limit;
-    const raw = Math.min(t.rate * excess, t.cap ?? Infinity);
-    const pts = roundPts(raw);
-    if (pts > 0) penalties.push({ kind, value, raw, pts });
-  }
-  const light = h.light ?? 1;
-  const cloud = LIGHT.cloudPts * light * ((h.cloud ?? 0) / 100);
-  if (roundPts(cloud) > 0) penalties.push({ kind: 'cloud', value: h.cloud, light, raw: cloud, pts: roundPts(cloud) });
-  const dark = LIGHT.darkPts * (1 - light);
-  if (roundPts(dark) > 0) penalties.push({ kind: 'dark', value: light, raw: dark, pts: roundPts(dark) });
-  if (h.code >= STORM.minCode) penalties.push({ kind: 'storm', value: h.code, raw: STORM.pts, pts: STORM.pts });
-  const total = penalties.reduce((sum, p) => sum + p.pts, 0);
-  return { score: Math.max(0, 100 - total), penalties };
 }
 
 // The user's run window for a day as start hours, resolving 'sunrise'/'sunset' from the forecast.
@@ -464,16 +364,17 @@ function scoreHelp(hour) {
     <ul class="factors">
       <li><b>Cold</b>: feels-like temperature below ${temp(TERMS.cold.limit)} (feels-like includes wind chill).</li>
       <li><b>Heat &amp; humidity</b>: one combined deduction based on the runners' temp + dew point rule,
-        so muggy weather isn't penalized twice. Very hot, dry air (above ${temp(HEAT.dryLimit)}) has its
+        so muggy weather isn't penalized twice. It starts once the expected slowdown passes ${HEAT.deadZone}%,
+        since less than that isn't noticeable. Very hot, dry air (above ${temp(HEAT.dryLimit)}) has its
         own check, and whichever is worse counts.</li>
-      <li><b>Rain</b>: one combined deduction. Any chance of rain costs at least ${RAIN.chanceFloor} points,
-        growing with the chance, so a truly dry 0% hour stands out. If rain is actually forecast, the amount
+      <li><b>Rain</b>: one combined deduction. Chances up to ${RAIN.chanceLimit}% are free; above that it grows
+        with the chance, to about ${roundPts(RAIN.chanceRate * (100 - RAIN.chanceLimit))} points at 100%. If rain is actually forecast, the amount
         counts instead when it's worse: from ${RAIN.amountBase} points for a trace up to ${RAIN.amountCap}
         for a downpour. Chance and amount never stack.</li>
       <li><b>Wind</b> above ${speed(TERMS.wind.limit)}.</li>
       <li><b>UV index</b> above ${TERMS.uv.limit}.</li>
-      <li><b>Clouds</b>: a mild deduction for not being sunny, up to ${LIGHT.cloudPts} points for full overcast.
-        Only counts while the sun is up.</li>
+      <li><b>Clouds</b> (only with "Prefer sun" on in ⚙️ Preferences, currently ${state.prefs.preferSun ? 'on' : 'off'}):
+        a mild deduction for not being sunny, up to ${LIGHT.cloudPts} points for full overcast. Only counts while the sun is up.</li>
       <li><b>Darkness</b>: a mild ${LIGHT.darkPts} points when the sun is down, partial for the hour of sunrise or sunset.</li>
       <li><b>Thunderstorms</b>: a large deduction, because lightning is a safety risk.</li>
     </ul>
@@ -508,13 +409,13 @@ function unitsFor(dim) {
 const num = (n, digits = 2) => String(Number(n.toFixed(digits)));
 
 // A term as math in display units. `x` is the variable symbol, or a value for worked examples.
-function termExpr(kind, x, worked = false) {
+function termExpr(kind, x) {
   const t = TERMS[kind];
   const u = unitsFor(t.dim);
   const rate = num(t.rate / u.k);
   const limit = num(t.limit * u.k + u.offset, 1);
   const diff = t.below ? `${limit} − ${x}` : `${x} − ${limit}`;
-  const e = t.limit === 0 ? `${rate} · ${x}` : `${rate} · ${worked ? `(${diff})` : `max(0, ${diff})`}`;
+  const e = t.limit === 0 ? `${rate} · ${x}` : `${rate} · max(0, ${diff})`;
   return t.cap ? `min(${t.cap}, ${e})` : e;
 }
 
@@ -525,7 +426,7 @@ function dryHeatExpr(x) {
 }
 
 // Rain expressions in display units, with `p` (chance) and `r` (amount) as symbols or values.
-const rainChanceExpr = (p) => `${RAIN.chanceFloor} + ${RAIN.chanceRate} · ${p}`;
+const rainChanceExpr = (p) => `${RAIN.chanceRate} · max(0, ${p} − ${RAIN.chanceLimit})`;
 function rainAmountExpr(r) {
   const u = unitsFor('precip');
   return `min(${RAIN.amountCap}, ${RAIN.amountBase} + ${num(RAIN.amountRate / u.k)} · ${r})`;
@@ -545,13 +446,13 @@ function formula() {
     <div class="scroll-x"><table class="terms">
       ${termRows(['cold'])}
       ${row('D<sub>heat</sub>', 'max(H<sub>humid</sub>, H<sub>dry</sub>)')}
-      ${row('H<sub>humid</sub>', `${HEAT.ptsPerPct} · slowdown(T<sub>air</sub> + T<sub>dew</sub>)${imperial() ? '' : '  <span class="muted">sum in °F</span>'}`)}
+      ${row('H<sub>humid</sub>', `${HEAT.ptsPerPct} · max(0, slowdown(T<sub>air</sub> + T<sub>dew</sub>) − ${HEAT.deadZone})${imperial() ? '' : '  <span class="muted">sum in °F</span>'}`)}
       ${row('H<sub>dry</sub>', dryHeatExpr('T<sub>air</sub>'))}
       ${row('D<sub>rain</sub>', 'max(C<sub>rain</sub>, A<sub>rain</sub>)')}
-      ${row('C<sub>rain</sub>', `[P<sub>rain</sub> &gt; 0] · (${rainChanceExpr('P<sub>rain</sub>')})`)}
+      ${row('C<sub>rain</sub>', rainChanceExpr('P<sub>rain</sub>'))}
       ${row('A<sub>rain</sub>', `[R &gt; 0] · ${rainAmountExpr('R')}`)}
       ${termRows(['wind', 'uv'])}
-      ${row('D<sub>cloud</sub>', cloudExpr('L', 'N'))}
+      ${row('D<sub>cloud</sub>', `[prefer sun] · ${cloudExpr('L', 'N')}`)}
       ${row('D<sub>dark</sub>', darkExpr('L'))}
       ${row('D<sub>storm</sub>', `${STORM.pts} · [WMO code ≥ ${STORM.minCode}]`)}
     </table></div>
@@ -567,12 +468,14 @@ function formula() {
       T<sub>air</sub> = air temperature, T<sub>feels</sub> = apparent temperature, T<sub>dew</sub> = dew point (${t.unit}) ·
       P<sub>rain</sub> = precipitation probability (%) · R = precipitation (${unitsFor('precip').unit}) ·
       W = wind speed at 10 m (${unitsFor('speed').unit}) · UV = UV index · N = cloud cover (%) ·
-      L = share of the hour between sunrise and sunset (0–1) · [x] = 1 if true, else 0.
+      L = share of the hour between sunrise and sunset (0–1) · [prefer sun] = the Preferences setting
+      (currently ${state.prefs.preferSun ? 'on' : 'off'}) · [x] = 1 if true, else 0.
       ${imperial() ? 'The model runs in metric, so some coefficients above are conversions, which is why they aren\'t round numbers.' : ''}
     </p>
     <p class="muted small">
       Design notes: most terms are linear "hinge" functions, zero inside the comfort zone and growing with
-      distance outside it. Heat is the exception: heat and humidity are one physiological problem (shedding
+      distance outside it. Heat and rain chance have small free zones too (slowdown under ${HEAT.deadZone}%,
+      chance up to ${RAIN.chanceLimit}%), so tiny forecast blips don't cost points. Heat is the exception: heat and humidity are one physiological problem (shedding
       heat), so they share one term and the worse of humid or dry heat counts, rather than stacking two
       penalties for the same thing. Marathon results show times slowing steadily as combined heat stress
       rises<sup>2</sup>. Heat uses air temperature, not feels-like, because feels-like already folds
@@ -600,35 +503,40 @@ function heatMath(p) {
   if (p.sumF != null) {
     const d = num(p.dew * u.k + u.offset, 1);
     const sum = imperial() ? `${t} + ${d} = ${num(p.sumF, 0)}` : `${t}°C + ${d}°C = ${num(p.sumF, 0)}°F`;
-    lines.push(`H<sub>humid</sub> = ${HEAT.ptsPerPct} · slowdown(${sum}) = ${HEAT.ptsPerPct} · ${num(p.slowdown)}% = ${num(p.humid, 1)}`);
+    const excess = Math.max(0, p.slowdown - HEAT.deadZone);
+    lines.push(`H<sub>humid</sub> = ${HEAT.ptsPerPct} · max(0, slowdown(${sum}) − ${HEAT.deadZone})`
+      + ` = ${HEAT.ptsPerPct} · max(0, ${num(p.slowdown)} − ${HEAT.deadZone}) = ${HEAT.ptsPerPct} · ${num(excess)} = ${num(p.humid)}`);
   }
-  lines.push(`H<sub>dry</sub> = ${dryHeatExpr(t)} = ${num(p.dry, 1)}`);
-  const rounded = num(p.raw, 1) === String(p.pts) ? '' : ` → ${p.pts}`;
-  lines.push(`D<sub>heat</sub> = max(${num(p.humid, 1)}, ${num(p.dry, 1)}) = ${num(p.raw, 1)}${rounded}`);
+  lines.push(`H<sub>dry</sub> = ${dryHeatExpr(t)} = ${num(p.dry)}`);
+  const rounded = num(p.raw) === String(p.pts) ? '' : ` → ${p.pts}`;
+  lines.push(`D<sub>heat</sub> = max(${num(p.humid)}, ${num(p.dry)}) = ${num(p.raw)}${rounded}`);
   return lines.join('<br>');
 }
 
 function rainMath(p) {
   const u = unitsFor('precip');
   const r = num(p.mm * u.k, u.digits);
-  const rounded = num(p.raw, 1) === String(p.pts) ? '' : ` → ${p.pts}`;
+  const rounded = num(p.raw) === String(p.pts) ? '' : ` → ${p.pts}`;
   return [
-    `C<sub>rain</sub> = ${p.value > 0 ? `${rainChanceExpr(p.value)} = ${num(p.chance, 1)}` : '0 (0% chance)'}`,
-    `A<sub>rain</sub> = ${p.mm > 0 ? `${rainAmountExpr(r)} = ${num(p.amt, 1)}` : '0 (no rain expected)'}`,
-    `D<sub>rain</sub> = max(${num(p.chance, 1)}, ${num(p.amt, 1)}) = ${num(p.raw, 1)}${rounded}`,
+    `C<sub>rain</sub> = ${rainChanceExpr(p.value)} = ${RAIN.chanceRate} · ${Math.max(0, p.value - RAIN.chanceLimit)} = ${num(p.chance)}`,
+    `A<sub>rain</sub> = ${p.mm > 0 ? `${rainAmountExpr(r)} = ${num(p.amt)}` : '0 (no rain expected)'}`,
+    `D<sub>rain</sub> = max(${num(p.chance)}, ${num(p.amt)}) = ${num(p.raw)}${rounded}`,
   ].join('<br>');
 }
 
 function workedMath(p) {
-  if (p.kind === 'storm') return `D<sub>storm</sub> = ${STORM.pts} · [${p.value} ≥ ${STORM.minCode}] = ${p.pts}`;
+  if (p.kind === 'storm') return `D<sub>storm</sub> = ${STORM.pts} · [WMO ${p.value ?? '–'} ≥ ${STORM.minCode}] = ${p.pts}`;
   if (p.kind === 'heat') return heatMath(p);
   if (p.kind === 'rain') return rainMath(p);
-  const rounded = num(p.raw, 1) === String(p.pts) ? '' : ` → ${p.pts}`;
-  if (p.kind === 'cloud') return `D<sub>cloud</sub> = ${cloudExpr(num(p.light), p.value)} = ${num(p.raw, 1)}${rounded}`;
-  if (p.kind === 'dark') return `D<sub>dark</sub> = ${darkExpr(num(p.value))} = ${num(p.raw, 1)}${rounded}`;
-  const u = unitsFor(TERMS[p.kind].dim);
+  const rounded = num(p.raw) === String(p.pts) ? '' : ` → ${p.pts}`;
+  if (p.kind === 'cloud') return `D<sub>cloud</sub> = ${cloudExpr(num(p.light), p.value)} = ${num(p.raw)}${rounded}`;
+  if (p.kind === 'dark') return `D<sub>dark</sub> = ${darkExpr(num(p.value))} = ${num(p.raw)}${rounded}`;
+  const t = TERMS[p.kind];
+  const u = unitsFor(t.dim);
   const x = num(p.value * u.k + u.offset, u.digits);
-  return `D<sub>${p.kind}</sub> = ${termExpr(p.kind, x, true)} = ${num(p.raw, 1)}${rounded}`;
+  // Show the clamped distance past the limit as its own step, so a zero reads as "inside the comfort zone".
+  const step = t.cap || t.limit === 0 ? '' : ` = ${num(t.rate / u.k)} · ${num(p.excess * u.k, u.digits)}`;
+  return `D<sub>${p.kind}</sub> = ${termExpr(p.kind, x)}${step} = ${num(p.raw)}${rounded}`;
 }
 
 function tempDewRule(h) {
@@ -647,8 +555,9 @@ function tempDewRule(h) {
 function breakdown(h) {
   const c = scoreClass(h.score);
   const when = `${dateObj(h.date).toLocaleDateString(undefined, { weekday: 'long' })}, ${fmtHour(h.hour)}`;
-  const items = h.penalties.length
-    ? h.penalties.map((p) => `<li><span>${PENALTY_LABEL[p.kind](p.value, p)}</span><span class="pts">−${p.pts}</span></li>`).join('')
+  const deductions = h.penalties.filter((p) => p.pts > 0);
+  const items = deductions.length
+    ? deductions.map((p) => `<li><span>${PENALTY_LABEL[p.kind](p.value, p)}</span><span class="pts">−${p.pts}</span></li>`).join('')
     : '<li class="muted">Ideal conditions, no deductions</li>';
   const sum = h.penalties.map((p) => p.pts).join(' + ') || '0';
   // Worked math stays available but collapsed, so the summary reads at a glance.
@@ -774,6 +683,7 @@ function renderPrefs() {
   $('#pref-to').innerHTML = `<option value="sunset">Sunset</option>${hours}`;
   $('#pref-from').value = String(state.prefs.from);
   $('#pref-to').value = String(state.prefs.to);
+  $('#pref-sun').checked = !!state.prefs.preferSun;
 }
 
 function openPrefs() {
@@ -784,6 +694,8 @@ function openPrefs() {
 function setPrefs(prefs) {
   state.prefs = prefs;
   save('prefs', prefs);
+  // Scores depend on preferSun, so rescore the loaded forecast rather than waiting for a refetch.
+  for (const h of state.data?.days.flatMap((d) => d.hours) ?? []) Object.assign(h, runScore(h, prefs));
   render();
   renderPrefs();
 }
@@ -920,7 +832,8 @@ for (const dialog of document.querySelectorAll('.sheet')) {
 $('#prefs-btn').addEventListener('click', openPrefs);
 $('#pref-from').addEventListener('change', (e) => setPrefs({ ...state.prefs, from: parseHour(e.target.value) }));
 $('#pref-to').addEventListener('change', (e) => setPrefs({ ...state.prefs, to: parseHour(e.target.value) }));
-$('#pref-reset').addEventListener('click', () => setPrefs({ ...DEFAULT_PREFS }));
+$('#pref-reset').addEventListener('click', () => setPrefs({ ...state.prefs, from: DEFAULT_PREFS.from, to: DEFAULT_PREFS.to }));
+$('#pref-sun').addEventListener('change', (e) => setPrefs({ ...state.prefs, preferSun: e.target.checked }));
 
 for (const radio of document.querySelectorAll('input[name="units"]')) {
   radio.addEventListener('change', () => setUnits(radio.value));

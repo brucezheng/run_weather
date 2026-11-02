@@ -365,6 +365,8 @@ h2, h3 {
 .segmented label:has(input:focus-visible) { outline: 2px solid var(--rain); outline-offset: -2px; }
 .home-current { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin: 10px 0; }
 #home-search .results { position: static; margin-top: 4px; box-shadow: none; } /* in-flow inside the dialog */
+.check { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 15px; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--rain); }
 .pref-row label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .pref-row select {
   min-width: 140px;
