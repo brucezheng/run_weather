@@ -1,0 +1,13 @@
+{
+  "hosting": {
+    "public": ".",
+    "ignore": ["firebase.json", ".*", ".*/**", "**/.*", "**/.*/**", "**/node_modules/**", "tests/**", "*.md", "*.log"],
+    "cleanUrls": true,
+    "headers": [
+      {
+        "source": "**/*.@(html|js|css)",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      }
+    ]
+  }
+}

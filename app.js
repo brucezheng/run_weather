@@ -2,6 +2,7 @@
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+const IP_GEO_URL = 'https://get.geojs.io/v1/ip/geo.json';
 const HOURLY = [
   'temperature_2m', 'apparent_temperature', 'dew_point_2m', 'precipitation_probability',
   'precipitation', 'weather_code', 'wind_speed_10m', 'uv_index', 'is_day', 'cloud_cover',
@@ -629,18 +630,21 @@ function setPlace(place) {
   refresh();
 }
 
-// First visit: guess the city from the visitor's IP via the Netlify edge function
-// (netlify/edge-functions/geo.js). Returns null when unavailable, e.g. on localhost.
+// First visit: guess the city from the visitor's IP with GeoJS, a free, keyless lookup service.
+// City-level at best and wrong for VPNs or mobile carriers, so the place is marked approximate.
+// Returns null when the lookup fails or is blocked (some ad blockers block it).
 async function guessPlace() {
   try {
-    const res = await fetch('/api/geo', { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(IP_GEO_URL, { signal: AbortSignal.timeout(2000) });
     if (!res.ok) return null;
     const g = await res.json();
-    if (g.lat == null || g.lon == null) return null;
+    const lat = Number(g.latitude);
+    const lon = Number(g.longitude);
+    if (g.latitude == null || g.longitude == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
     return {
       name: [g.city, g.region].filter(Boolean).join(', ') || 'Near you',
-      lat: Number(Number(g.lat).toFixed(3)),
-      lon: Number(Number(g.lon).toFixed(3)),
+      lat: Number(lat.toFixed(3)),
+      lon: Number(lon.toFixed(3)),
       approx: true,
     };
   } catch {
