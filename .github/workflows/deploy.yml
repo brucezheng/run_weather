@@ -17,10 +17,10 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 26
 
       - name: Test
-        run: node --test tests/
+        run: node --test
 
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
